@@ -1,0 +1,26 @@
+  rm test4.o
+  rm int2
+  gfortran -std=legacy -w -c test4.f
+  gfortran -std=legacy -w -o int2 test4.o -framework Accelerate \
+        -L/usr/local/lib -lfmm3d  \
+        ../../src/common/lapack_wrap.f90 \
+        ../../src/common/cumsum.f \
+        ../../src/common/dlaran.f \
+        ../../src/common/dotcross3d.f \
+        ../../src/common/hkrand.f \
+        ../../src/common/rotmat_gmres.f \
+        ../../src/common/setops.f \
+        ../../src/common/sort.f \
+        ../../src/common/sparse_reps.f \
+        ../../src/common/get_fmm_thresh.f \
+        ../../src/quadratures/*.f* \
+        ../../src/tria_routs/*.f* \
+        ../../src/surface_routs/*.f* \
+        ../../src/surface_routs/xtri_routs/*.f*\
+        ../../src/kernels/*.f* \
+        ../../src/helm_wrappers/*.f*
+
+  ./int2
+
+
+

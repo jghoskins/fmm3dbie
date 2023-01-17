@@ -3000,3 +3000,803 @@ c
 c
 c
 c
+ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+c
+c
+c           .   .   .   some complex routines
+c
+c
+ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+c
+      subroutine ctriaints_wnodes_c(npatches,norder,npols,
+     1   srccoefs,ndtarg,ntarg,xyztarg,itargptr,ntargptr,
+     2   nporder,nppols,fker,ndd,dpars,ndz,zpars,ndi,ipars,nqpts,
+     3   qnodes,wts,cintvals)
+c
+c
+c       this subroutine computes the integral of
+c       a kernel against koornwinder polynomials
+c       given a prescribed set of nodes and weights
+c
+
+      implicit none
+      integer npatches,norder,npols,ndtarg
+      integer nporder,nppols
+      complex *16 srccoefs(9,npols,npatches),xyztarg(ndtarg,ntarg)
+      integer ntarg
+      integer itargptr(npatches),ntargptr(npatches)
+      integer ndd,ndz,ndi
+      real *8 dpars(ndd)
+      complex *16 zpars(ndz)
+      integer ipars(ndi),nqpts
+      real *8 qnodes(2,nqpts),wts(nqpts)
+
+      complex *16 cintvals(nppols,ntarg)
+      real *8, allocatable :: rat1(:,:), rat2(:,:,:), rsc1(:,:)
+      real *8, allocatable :: rat1p(:,:), rat2p(:,:,:), rsc1p(:,:)
+      complex *16, allocatable :: qwts(:)
+      complex *16, allocatable :: srcvals(:,:)
+      real *8, allocatable :: rsigvals(:,:),rsigtmp(:)
+      complex *16, allocatable :: sigvals(:,:)
+      complex *16, allocatable :: xkernvals(:,:)
+
+      integer i,ipatch,j,lda,ldb,itarg,ldc,ntarg0,ii
+
+      complex *16 fval
+      real *8 da,ra
+
+      character *1 transa,transb
+      real *8 alpha,beta
+      complex *16 alpha_c,beta_c
+      complex *16 ima
+
+      data ima /(0,1)/
+
+      external fker
+
+c
+c       initialize koornwinder polynomials
+c
+
+      
+      allocate(rat1(2,0:norder),rat2(3,0:norder,0:norder))
+      allocate(rsc1(0:norder,0:norder))
+      call koornf_init(norder,rat1,rat2,rsc1) 
+
+      allocate(rat1p(2,0:nporder),rat2p(3,0:nporder,0:nporder))
+      allocate(rsc1p(0:nporder,0:nporder))
+      call koornf_init(nporder,rat1p,rat2p,rsc1p) 
+
+      allocate(rsigtmp(nppols))
+
+
+c
+c    
+c
+c
+      allocate(sigvals(nppols,nqpts),rsigvals(npols,nqpts))
+
+      allocate(srcvals(12,nqpts),qwts(nqpts))
+
+      do i=1,nqpts
+        call koornf_pols(qnodes(1,i),norder,npols,rsigvals(1,i),
+     1        rat1,rat2,rsc1)
+        call koornf_pols(qnodes(1,i),nporder,nppols,rsigtmp,rat1p,
+     2        rat2p,rsc1p)
+        do j=1,nppols
+          sigvals(j,i) = rsigtmp(j)
+        enddo
+      enddo
+
+
+
+      do ipatch=1,npatches
+c
+c        compute srcvals
+c
+        transa = 'N'
+        transb = 'N'
+        alpha = 1
+        beta = 0
+        lda = 9
+        ldb = npols
+        ldc = 12
+
+        da = 1
+
+        call dgemm_guru_cdc77(srccoefs(1,1,ipatch),rsigvals,srcvals,
+     1      transa,transb,nqpts,npols,alpha,lda,ldb,beta,ldc)
+   
+        call get_norms_qwts_tri_c(nqpts,wts,srcvals,
+     1        da,qwts)
+
+c
+c
+c          compute the kernel values for all the targets
+c
+        
+        ntarg0 = ntargptr(ipatch)
+        allocate(xkernvals(nqpts,ntarg0))
+        do itarg=itargptr(ipatch),itargptr(ipatch)+ntarg0-1
+          ii = itarg - itargptr(ipatch)+1
+          do j=1,nqpts
+            call fker(srcvals(1,j),ndtarg,xyztarg(1,itarg),ndd,dpars,
+     1         ndz,zpars,ndi,ipars,fval)
+            xkernvals(j,ii) = fval*qwts(j)
+          enddo
+        enddo
+
+
+        transa = 'n'
+        transb = 'n'
+        alpha_c = 1
+        beta_c = 0
+
+      call zgemm_guru(transa,transb,nppols,ntarg0,nqpts,alpha_c,sigvals,
+     1   nppols,xkernvals,nqpts,beta_c,cintvals(1,itargptr(ipatch)),
+     2   nppols)
+      
+        deallocate(xkernvals)
+c
+
+      enddo
+
+      
+
+      return
+      end
+c
+c
+c
+c
+c
+      subroutine ctriaints_adap_c(eps,intype,
+     1     npatches,norder,npols,srccoefs,ndtarg,
+     2     ntarg,xyztarg,itargptr,ntargptr,nporder,nppols,
+     3     ntrimax,rat1,rat2,rsc1,rat1p,rat2p,rsc1p,
+     4     fker,ndd,dpars,ndz,zpars,ndi,ipars,nqorder,cintvals)
+
+c
+      implicit none
+
+c
+cc     calling sequence variables
+c
+      real *8 eps
+      integer intype
+      integer npatches,norder,npols
+      integer nporder,nppols
+      complex *16 srccoefs(9,npols,npatches)
+      
+      integer ntarg,ndtarg
+      complex *16 xyztarg(ndtarg,ntarg)
+      integer itargptr(npatches)
+      integer ntargptr(npatches)
+      
+      external fker
+      integer ndd,ndz,ndi
+      real *8 dpars(ndd)
+      complex *16 zpars(ndz)
+      integer ipars(ndi)
+
+      real *8 rat1(2,0:norder)
+      real *8 rat2(3,0:norder,0:norder)
+      real *8 rsc1(0:norder,0:norder)
+
+      real *8 rat1p(2,0:nporder)
+      real *8 rat2p(3,0:nporder,0:nporder)
+      real *8 rsc1p(0:nporder,0:nporder)
+
+      integer nqorder
+
+      complex *16 cintvals(nppols,ntarg)
+
+c
+c       tree variables
+c
+      integer nlmax,ltree
+      real *8, allocatable :: tvs(:,:,:),da(:)
+      integer, allocatable :: ichild_start(:)
+      real *8, allocatable :: tvs2(:,:,:),da2(:)
+      integer, allocatable :: ichild_start2(:)
+
+      integer ntri,ntrimax,nlev,itri,istart,i,j,k
+      integer ier,itarg,jj,jstart,npts
+      integer iqtri,ii
+
+
+      integer npmax
+
+      real *8, allocatable :: uvsq(:,:),wts(:),uvtmp(:,:)
+      real *8, allocatable :: umattmp(:,:),vmattmp(:,:)
+      integer nqpols
+      real *8, allocatable :: sigvals(:,:),sigvalsdens(:,:)
+      complex *16, allocatable :: srcvals(:,:),qwts(:)
+      real *8, allocatable :: sigvals2(:,:),sigvalsdens2(:,:)
+      complex *16, allocatable :: srcvals2(:,:),qwts2(:)
+      integer itmp
+
+      character *1 transa,transb
+      real *8 alpha,beta
+      integer lda,ldb,ldc
+      integer nn1,nn2,nn3,nn4,npmax0,ntmaxuse,ntmaxuse0
+      
+      
+c
+c      get the tree
+c
+      nlmax = 20
+
+
+      ntmaxuse = ntrimax
+c
+c       for each triangle, we just store three pieces
+c       of info
+c         triangle vertices
+c         area of triangle
+c         ichild_start = index for first child, 
+c         
+c
+      allocate(ichild_start(ntrimax),tvs(2,3,ntrimax))
+      allocate(da(ntrimax))
+
+      do i=1,ntrimax
+        ichild_start(i) = -1
+        da(i) = 0
+        do j=1,3
+          do k=1,2
+            tvs(k,j,i) = 0
+          enddo
+        enddo
+      enddo
+
+      da(1) = 1.0d0
+      
+      tvs(1,1,1) = 0
+      tvs(2,1,1) = 0
+
+      tvs(1,2,1) = 1
+      tvs(2,2,1) = 0
+
+      tvs(1,3,1) = 0
+      tvs(2,3,1) = 1
+
+c
+c       get quadrature nodes and weights on the base triangle
+c       based on quadrature type
+c
+
+      if(intype.eq.1) then
+         nqpols = (nqorder+1)*(nqorder+2)/2
+         allocate(uvsq(2,nqpols),wts(nqpols))
+         allocate(umattmp(nqpols,nqpols),vmattmp(nqpols,nqpols))
+      
+         call vioreanu_simplex_quad(nqorder,nqpols,uvsq,umattmp,
+     1      vmattmp,wts)
+         
+         deallocate(umattmp,vmattmp)
+      endif
+
+      if(intype.eq.2) then
+        call triasymq_pts(nqorder,nqpols)
+        allocate(uvsq(2,nqpols),wts(nqpols))
+        call triasymq(nqorder,tvs(1,1,1),tvs(1,2,1),tvs(1,3,1),
+     1         uvsq,wts,nqpols)    
+      endif
+
+      allocate(uvtmp(2,nqpols))
+     
+      npmax = ntrimax*nqpols
+      allocate(sigvals(npols,npmax))
+      allocate(sigvalsdens(nppols,npmax))
+      allocate(srcvals(12,npmax),qwts(npmax))
+
+c
+c      current number of triangles in the adaptive structure
+c
+      ntri = 1
+c
+c        intialize sigvals for root triangle
+c
+
+
+      call mapuv(tvs(1,1,1),nqpols,uvsq,uvtmp)
+      do i=1,nqpols
+        call koornf_pols(uvtmp(1,i),norder,npols,
+     1      sigvals(1,i),rat1,rat2,rsc1)
+        call koornf_pols(uvtmp(1,i),nporder,nppols,
+     1      sigvalsdens(1,i),rat1p,rat2p,rsc1p)
+      enddo
+
+
+      do itri=1,npatches
+c
+cc       for the current patch compute geometry info for base triangle 
+c
+        transa = 'N'
+        transb = 'N'
+        alpha = 1
+        beta = 0
+        lda = 9
+        ldb = npols
+        ldc = 12
+
+        call dgemm_guru_cdc77(srccoefs(1,1,itri),sigvals,srcvals,
+     1      transa,transb,nqpols,npols,alpha,lda,ldb,beta,ldc)
+
+        call get_norms_qwts_tri_c(nqpols,wts,srcvals,da,qwts)
+
+        do itarg=itargptr(itri),itargptr(itri)+ntargptr(itri)-1
+
+
+ 1111     continue
+          ier = 0
+          call triaadap_c(eps,nqorder,nqpols,nlmax,ntmaxuse,ntri,
+     1          ichild_start,tvs,da,uvsq,wts, 
+     1          norder,npols,srccoefs(1,1,itri),
+     2          npmax,srcvals,
+     2          qwts,sigvals,nporder,nppols,sigvalsdens,ndtarg,
+     3          xyztarg(1,itarg),
+     3          rat1,rat2,rsc1,
+     3          rat1p,rat2p,rsc1p,
+     3          fker,ndd,dpars,ndz,zpars,ndi,ipars,
+     3          cintvals(1,itarg),ier)
+           if(ier.eq.4) then
+             ntmaxuse0 = ntmaxuse*4
+             npmax0 = ntmaxuse0*nqpols
+             allocate(sigvals2(npols,npmax))
+             allocate(sigvalsdens2(nppols,npmax))
+             allocate(srcvals2(12,npmax),qwts2(npmax))
+             allocate(ichild_start2(ntmaxuse),tvs2(2,3,ntmaxuse))
+             allocate(da2(ntmaxuse))
+             nn1 = npols*npmax
+             nn2 = nppols*npmax
+             nn3 = 12*npmax*2
+             nn4 = ntri*6
+             call dcopy_guru(nn1,sigvals,1,sigvals2,1)
+             call dcopy_guru(nn2,sigvalsdens,1,sigvalsdens2,1)
+             call dcopy_guru(nn3,srcvals,1,srcvals2,1)
+             call dcopy_guru(2*npmax,qwts,1,qwts2,1)
+             do ii=1,ntri
+               ichild_start2(ii) = ichild_start(ii)
+             enddo
+             call dcopy_guru(nn4,tvs,1,tvs2,1)
+             call dcopy_guru(ntri,da,1,da2,1)
+
+
+             deallocate(sigvals,sigvalsdens,srcvals,qwts,ichild_start)
+             deallocate(tvs,da)
+
+
+             allocate(sigvals(npols,npmax0))
+             allocate(sigvalsdens(nppols,npmax0))
+             allocate(srcvals(12,npmax0),qwts(npmax0))
+             allocate(ichild_start(ntmaxuse0),tvs(2,3,ntmaxuse0))
+             allocate(da(ntmaxuse0))
+
+             do ii=1,ntmaxuse0
+               ichild_start(ii) = -1
+             enddo
+
+             call dcopy_guru(nn1,sigvals2,1,sigvals,1)
+             call dcopy_guru(nn2,sigvalsdens2,1,sigvalsdens,1)
+             call dcopy_guru(nn3,srcvals2,1,srcvals,1)
+             call dcopy_guru(2*npmax,qwts2,1,qwts,1)
+             do ii=1,ntri
+               ichild_start(ii) = ichild_start2(ii)
+             enddo
+             call dcopy_guru(nn4,tvs2,1,tvs,1)
+             call dcopy_guru(ntri,da2,1,da,1)
+
+             npmax = npmax0
+             ntmaxuse = ntmaxuse0
+             call prinf('restarting adaptive inetgration with ntri=*',
+     1             ntmaxuse,1)
+
+
+             deallocate(sigvals2,sigvalsdens2,srcvals2,ichild_start2)
+             deallocate(tvs2,da2,qwts2)
+             goto 1111
+           endif
+        enddo
+
+        do i=1,ntri
+          ichild_start(i) = -1
+        enddo
+      enddo
+
+      return
+      end
+
+c
+c
+c
+c
+c
+      subroutine triaadap_c(eps,m,kpols,nlmax,ntmax,ntri,
+     1             ichild_start,tvs,da,uvsq,wts,
+     1             norder,npols,srccoefs,npmax,srcvals,
+     2             qwts,sigvals,nporder,nppols,sigvalsdens,
+     3             ndtarg,xt,
+     3             rat1,rat2,rsc1,
+     3             rat1p,rat2p,rsc1p,
+     3             fker,ndd,dpars,ndz,zpars,ndi,
+     3             ipars,cintall,ier)
+
+c
+c       this subroutine adaptively computes the integral
+c        of the functions
+c   
+c        \int_{T} 1/|xt- y(u,v)| K_{n,m}(u,v) |J(u,v)| du dv
+c        n,m = 1,2\ldots npols
+c
+c        K_{n,m}(u,v) are the koornwinder polynomials on the 
+c        standard simplex (0,0)-(1,0)-(0,1)
+c
+c         |J(u,v)| = |dy/du \times dy/dv|
+c        
+c
+c        relevant parameters on a quad refined
+c        grid along the way
+c
+c        DOCUMENTATION NEEDS UPDATING:
+c
+c
+c        IN:
+c        eps - precision requested
+c        m - quadrature order
+c        kpols - number of quarature nodes (look up triasymq 
+c                 for getting kpols(m))
+c        nlmax - max level of refinement for geometry
+c        ntmax - max number of triangles
+c        ntri - current number of triangles in adaptive structure
+c        ichild_start(i) - first child of triangle i
+c        tvs(2,3,ntmax) - vertices of hierarchy of triangles
+c        da(ntmax) - area of triangles
+c        uvsq(kpols) - integration nodes on standard triangle
+c        wts(kpols) - integration weights on standard triangle
+c        npols - total number of koornwinder polynomials to be integrated
+c        norder - order of discretization of the surface
+c        npols - (norder+1)*(norder+2)/2: total number of 
+c                koornwinder polynomials to be integrated
+c        srccoefs(9,npols) - xyz coefficients of koornwinder expansion 
+c                             of current surface + derivative info
+c 
+c        npmax - max number of points = ntmax*kpols
+c        srczvals(12,npmax) - geometry info on heirarchy of meshes
+c        qwts(npmax) - quadrature weights 
+c        sigvals(npols,npmax) - 
+c                   koornwinder polynomials computed along the adaptive grid
+c        
+c        OUT:
+c        cintall(npols) - computed integral
+c        ier - error code
+c           ier = 0, successful execution
+c           ier = 4, too few triangles, try with more triangles
+c
+c         
+
+      implicit real *8 (a-h,o-z)
+      integer, allocatable :: istack(:)
+      integer ichild_start(ntmax)
+      real *8 da(ntmax)
+      real *8 tvs(2,3,ntmax), uvsq(2,kpols),wts(kpols)
+      integer nproclist0, nproclist
+      integer idone
+      complex *16 srccoefs(9,npols)
+      real *8 sigvals(npols,npmax)
+      real *8 sigvalsdens(nppols,npmax)
+      complex *16 srcvals(12,*),qwts(npmax)
+      complex *16, allocatable :: xkernvals(:)
+      complex *16 xt(ndtarg)
+      complex *16 cintall(nppols),fval
+      complex *16, allocatable :: ctmp(:)
+      complex *16, allocatable :: cvals(:,:)
+
+      integer ndd,ndz,ndi
+      real *8 dpars(ndd)
+      complex *16 zpars(ndz)
+      integer ipars(ndi)
+      integer ier
+
+      real *8 rat1(2,0:norder),rat2(3,0:norder,0:norder)
+      real *8 rsc1(0:norder,0:norder)
+
+      external fker
+
+c
+c         for historic reasons
+c
+      ksigpols = nppols
+      allocate(ctmp(nppols))
+      allocate(istack(2*ntmax))
+      allocate(cvals(ksigpols,ntmax))
+
+      nfunev = 0
+
+      do i=1,ksigpols
+        cvals(i,1) = 0
+      enddo
+
+      allocate(xkernvals(npmax))
+
+c
+cc      compute integral at level 0
+c
+      do i=1,kpols
+         call fker(srcvals(1,i),ndtarg,xt,ndd,dpars,ndz,zpars,ndi,
+     1      ipars,fval)
+         xkernvals(i) = fval*qwts(i)
+         do j=1,ksigpols
+            cvals(j,1) = cvals(j,1)+xkernvals(i)*sigvalsdens(j,i)
+         enddo
+      enddo
+
+      nfunev = nfunev + kpols
+
+      
+      do i=1,ksigpols
+         cintall(i) = cvals(i,1)
+      enddo
+
+      nproclist0 = 1
+      istack(1) = 1
+
+
+      call triaadap_main_c(eps,kpols,nlmax,ntmax,ntri,ichild_start,
+     1      tvs,da,uvsq,wts,norder,npols,srccoefs,
+     2      npmax,srcvals,qwts,sigvals,nporder,nppols,
+     3      sigvalsdens,ndtarg,xt,rat1,rat2,rsc1,
+     3      rat1p,rat2p,rsc1p,
+     3      fker,ndd,dpars,
+     3      ndz,zpars,ndi,ipars,cvals,istack,nproclist0,
+     4      xkernvals,cintall,ier)
+
+      return
+      end
+c
+c
+c
+c
+c
+       
+      subroutine triaadap_main_c(eps,kpols,nlmax,ntmax,ntri,
+     1      ichild_start,
+     1      tvs,da,uvsq,wts,norder,npols,srccoefs,
+     2      npmax,srcvals,qwts,sigvals,nporder,nppols,sigvalsdens,
+     3      ndtarg,xt,rat1,rat2,rsc1,
+     3      rat1p,rat2p,rsc1p,
+     3      fker,ndd,dpars,ndz,
+     3      zpars,ndi,ipars,cvals,istack,nproclist0,xkernvals,
+     4      cintall,ier)
+      
+
+      implicit real *8 (a-h,o-z)
+      integer istack(*),nproclist0
+      integer ichild_start(ntmax)
+      integer nporder,nppols
+      real *8 da(ntmax)
+      real *8 tvs(2,3,ntmax), uvsq(2,kpols),wts(kpols)
+      integer  nproclist
+      integer idone
+      complex *16 srccoefs(9,npols)
+      real *8 sigvals(npols,npmax)
+      real *8 sigvalsdens(nppols,npmax)
+      complex *16 qwts(npmax)
+      complex *16 xkernvals(npmax)
+      complex *16 xt(ndtarg)
+      complex *16 srcvals(12,*)
+      complex *16 cintall(nppols),fval,ctmp(nppols)
+      complex *16 cvals(nppols,ntmax)
+
+      integer ndd,ndz,ndi
+      real *8 dpars(ndd)
+      complex *16 zpars(ndz)
+      integer ipars(ndi)
+
+      real *8 rat1(2,0:norder),rat2(3,0:norder,0:norder)
+      real *8 rsc1(0:norder,0:norder)
+
+      real *8 rat1p(2,0:nporder),rat2p(3,0:nporder,0:nporder)
+      real *8 rsc1p(0:nporder,0:nporder)
+
+
+      real *8, allocatable :: uvtmp(:,:)
+      character *1 transa,transb
+      integer lda,ldb,ldc
+      external fker
+      
+      allocate(uvtmp(2,kpols))
+
+c
+c         for historic reasons
+c
+      ksigpols = nppols
+      kfine = 4*kpols
+
+      ier = 0
+
+
+      do ilev=0,nlmax
+        idone = 1
+        nproclist = 0
+        
+        do iproc = 1,nproclist0
+          itri = istack(iproc)
+
+c
+c           check to see if triangle already has 
+c           children, if not, set children
+c           and compute necessary info
+c
+          if(ichild_start(itri).eq.-1) then
+
+c
+c            current triangle doesn't have children,
+c            compute necessary info
+c
+
+            if(ntri+4.gt.ntmax) then
+c               print *, "Too many triangles in ctriaadap"
+c               print *, "Exiting without computing anything"
+               ier = 4
+               return
+            endif
+            
+            ichild_start(itri) = ntri+1
+            call gettrichildren(tvs(1,1,itri),tvs(1,1,ntri+1),
+     1             tvs(1,1,ntri+2),tvs(1,1,ntri+3),tvs(1,1,ntri+4))
+
+            rr = 0.25d0*da(itri)
+            do j=ntri+1,ntri+4
+              da(j) = rr
+              call mapuv(tvs(1,1,j),kpols,uvsq,uvtmp)
+              istart = (j-1)*kpols+1
+              do i=1,kpols
+                 ii = istart+i-1
+                call koornf_pols(uvtmp(1,i),norder,npols,sigvals(1,ii),
+     1             rat1,rat2,rsc1)
+                call koornf_pols(uvtmp(1,i),nporder,nppols,
+     1             sigvalsdens(1,ii),rat1p,rat2p,rsc1p)
+              enddo
+              
+              transa = 'N'
+              transb = 'N'
+              alpha = 1
+              beta = 0
+              lda = 9
+              ldb = npols
+              ldc = 12
+
+              call dgemm_guru_cdc77(srccoefs,sigvals(1,istart),
+     1          srcvals(1,istart),transa,transb,kpols,npols,alpha,
+     1      lda,ldb,beta,ldc)
+              call get_norms_qwts_tri_c(kpols,wts,srcvals(1,istart),
+     1           rr,qwts(istart))
+
+            enddo
+            ntri = ntri+4
+          endif
+        
+c
+cc           compute xkernvals
+c
+          itric1 = ichild_start(itri)
+          istart = (itric1-1)*kpols
+          do j=1,kfine
+            jj=j+istart
+            call fker(srcvals(1,jj),ndtarg,xt,ndd,dpars,
+     1         ndz,zpars,ndi,ipars,fval)
+            xkernvals(jj) = fval*qwts(jj)
+          enddo
+cc          call prin2('xkernvals=*',xkernvals(istart+1),kfine)
+
+          nfunev = nfunev + kfine
+
+c
+cc         subtract contribution of current 
+c          triangle
+          do isig=1,ksigpols
+            cintall(isig) = cintall(isig)-cvals(isig,itri)
+            ctmp(isig) = 0
+          enddo
+
+c
+cc        add in contributions of children triangles
+c
+          do itric=itric1,itric1+3
+            do isig=1,ksigpols
+              cvals(isig,itric) = 0
+            enddo
+
+            istart = (itric-1)*kpols
+            do k=1,kpols
+              ii = istart+k
+              do isig=1,ksigpols
+                cvals(isig,itric) = cvals(isig,itric)+xkernvals(ii)*
+     1                                  sigvalsdens(isig,ii)
+              enddo
+            enddo
+              
+            do isig=1,ksigpols
+              cintall(isig) = cintall(isig) + cvals(isig,itric)
+              ctmp(isig) = ctmp(isig)+cvals(isig,itric)
+            enddo
+          enddo
+
+c
+cc        compare integral of children to integral of parent
+c         to determine if the children need to be refined further
+c
+          errmax = 0
+          do isig=1,ksigpols
+            if(abs(ctmp(isig)-cvals(isig,itri)).gt.errmax) 
+     1          errmax = abs(ctmp(isig)-cvals(isig,itri))
+          enddo
+
+          if(errmax.gt.eps) then
+            idone = 0
+            
+            do j=1,4
+              istack(nproclist0+nproclist+j) = itric1+j-1
+            enddo
+            nproclist = nproclist+4
+          endif
+c
+cc        end of looping over all triangles at current stage
+        enddo
+cc         if idone is still 1, that means that no more refinement
+c          is needed
+         if(idone.eq.1) goto 1111
+        do i=1,nproclist
+          istack(i) = istack(nproclist0+i)
+        enddo
+        nproclist0 = nproclist
+      enddo
+ 1111 continue
+
+
+      return
+      end
+c
+c
+c
+c
+c
+        subroutine dgemm_guru_cdc77(srccoefs,rsigvals,srcvals,
+     1      transa,transb,nqpts,npols,alpha,lda,ldb,beta,ldc)
+        implicit real *8 (a-h,o-z)
+        complex *16 srccoefs(9,npols),srcvals(12,nqpts)
+        real *8 tmpsrccoefs(9,npols),tmpsrcvals(12,nqpts)
+        real *8 rsigvals(*)
+        complex *16 ima
+        data ima /(0,1)/
+
+        do ii=1,9
+        do jj=1,npols
+            tmpsrccoefs(ii,jj) = real(srccoefs(ii,jj))
+        enddo
+        enddo
+        call dgemm_guru(transa,transb,9,nqpts,npols,alpha,
+     1     tmpsrccoefs,lda,rsigvals,ldb,beta,tmpsrcvals,ldc)
+        do ii=1,12
+        do jj=1,nqpts
+            srcvals(ii,jj) = tmpsrcvals(ii,jj)
+        enddo
+        enddo
+        
+        do ii=1,9
+        do jj=1,npols
+            tmpsrccoefs(ii,jj) = imag(srccoefs(ii,jj))
+        enddo
+        enddo
+        call dgemm_guru(transa,transb,9,nqpts,npols,alpha,
+     1     tmpsrccoefs,lda,rsigvals,ldb,beta,tmpsrcvals,ldc)
+        do ii=1,12
+        do jj=1,nqpts
+            srcvals(ii,jj) = srcvals(ii,jj)+ima*tmpsrcvals(ii,jj)
+        enddo
+        enddo
+
+        return
+        end

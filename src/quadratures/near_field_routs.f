@@ -1054,3 +1054,657 @@ C$OMP END PARALLEL DO
 
 
       
+
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+c
+c
+c       .   .   .   additional complex routines
+c
+c
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+
+c------------------------------------------------------------------      
+      subroutine findnearmem_c(xyzs_c,ns,rads,ndt,
+     1        targets_c,nt,nnz,ifre)
+c
+cc      identify all sources which are contained in 
+c       |xyzs(:,i)-targets(:,j)|<=rads(i).
+c       We use hung lists to identify a nearly minimal set of
+c       sources to loop over relevant for each target.
+c
+c       This is a memory management routine for findnearmem_c
+c       
+c
+c       Calling sequence variables
+c
+c       xyzs    in: real *8 (3,ns)
+c               location of the sources
+c
+c       ns      in: integer
+c               number of sources
+c
+c       rads    in: real *8(ns)
+c               radii associated with the sources
+c
+c       ndt     in: integer
+c               leading dimension of target array
+c
+c       targets in: real *8(ndt,nt)
+c               target info
+c               the first three components must be
+c               the xyz coordinates
+c
+c       nt      in: integer
+c               number of targets
+c
+c       radt    in: real *8(ns)
+c               radii associated with the targets
+c
+c       targets in: real *8(3,nt)
+c               location of the targets
+c
+c       nt      in: integer
+c               number of targets
+c
+c       OUTPUT
+c       nnz     out: integer
+c               number of elements in the flag array
+c
+c               
+c-------------------------------
+
+       implicit real *8 (a-h,o-z)
+       complex *16 xyzs_c(3,*),targets_c(ndt,*)
+       real *8  rads(*)
+       real *8, allocatable :: rstmp(:)
+       real *8, allocatable :: xyzs(:,:)
+
+       integer, allocatable :: nlst(:)
+c
+cc       tree variables
+c 
+       real *8, allocatable :: centers(:,:),boxsize(:),targs(:,:)
+       integer, allocatable :: itree(:)
+       integer *8 ipointer(8), ltree
+       integer, allocatable :: ilevel(:)
+       integer, allocatable :: nlist1(:),list1(:,:)
+       integer, allocatable :: nlist2(:),list2(:,:)
+       integer, allocatable :: nlist3(:),list3(:,:)
+       integer, allocatable :: nlist4(:),list4(:,:)
+       integer mnlist1,mnlist2,mnlist3,mnlist4
+       integer, allocatable :: isrcper(:),isrcse(:,:)
+       integer, allocatable :: itargper(:),itargse(:,:)
+
+       allocate(rstmp(ns))
+
+
+C$OMP PARALLEL DO DEFAULT(SHARED)
+       do i=1,ns
+         rstmp(i) = 2*rads(i)
+       enddo
+C$OMP END PARALLEL DO       
+       allocate(targs(3,nt))
+
+C$OMP PARALLEL DO DEFAULT(SHARED)       
+       do i=1,nt
+         targs(1,i) = real(targets_c(1,i))
+         targs(2,i) = real(targets_c(2,i))
+         targs(3,i) = real(targets_c(3,i))
+       enddo
+C$OMP END PARALLEL DO       
+
+        allocate(xyzs(3,ns))
+
+C$OMP PARALLEL DO DEFAULT(SHARED)       
+       do i=1,ns
+         xyzs(1,i) = real(xyzs_c(1,i))
+         xyzs(2,i) = real(xyzs_c(2,i))
+         xyzs(3,i) = real(xyzs_c(3,i))
+       enddo
+C$OMP END PARALLEL DO       
+
+       idivflag = 0
+       ndiv = 2
+       isep = 1
+       nlmax = 51
+       nlmin = 0
+       iper = 0
+       ifunif = 0
+       nbmax = 0
+
+       nlevels = 0
+       nboxes = 0
+       mnlist1 = 0
+       mnlist2 = 0
+       mnlist3 = 0
+       mnlist4 = 0
+       mnbors = 27
+
+       call pts_tree_mem(xyzs,ns,targs,nt,idivflag,ndiv,nlmin,nlmax,
+     1  iper,ifunif,nlevels,nboxes,ltree) 
+
+       allocate(centers(3,nboxes),itree(ltree),boxsize(0:nlevels))
+
+       call pts_tree_build(xyzs,ns,targs,nt,idivflag,ndiv,nlmin,
+     1   nlmax,iper,ifunif,nlevels,nboxes,ltree,itree,ipointer,centers,
+     2   boxsize)
+       
+       allocate(isrcse(2,nboxes),itargse(2,nboxes))
+       allocate(isrcper(ns),itargper(nt))
+
+       call pts_tree_sort(ns,xyzs,itree,ltree,nboxes,nlevels,
+     1   ipointer,centers,isrcper,isrcse)
+      
+       call pts_tree_sort(nt,targs,itree,ltree,nboxes,nlevels,
+     1   ipointer,centers,itargper,itargse)
+
+c
+c   initialize various tree lists
+c
+      mnlist1 = 0
+      mnlist2 = 0
+      mnlist3 = 0
+      mnlist4 = 0
+      mnbors = 27
+
+      isep = 1
+      
+      call computemnlists(nlevels,nboxes,itree(ipointer(1)),boxsize,
+     1  centers,itree(ipointer(3)),itree(ipointer(4)),
+     2  itree(ipointer(5)),isep,itree(ipointer(6)),mnbors,
+     2  itree(ipointer(7)),iper,mnlist1,mnlist2,mnlist3,mnlist4)
+      
+      allocate(list1(mnlist1,nboxes),nlist1(nboxes))
+      allocate(list2(mnlist2,nboxes),nlist2(nboxes))
+      allocate(list3(mnlist3,nboxes),nlist3(nboxes))
+      allocate(list4(mnlist4,nboxes),nlist4(nboxes))
+
+      call computelists(nlevels,nboxes,itree(ipointer(1)),boxsize,
+     1  centers,itree(ipointer(3)),itree(ipointer(4)),
+     2  itree(ipointer(5)),isep,itree(ipointer(6)),mnbors,
+     3  itree(ipointer(7)),iper,nlist1,mnlist1,list1,nlist2,
+     4  mnlist2,list2,nlist3,mnlist3,list3,
+     4  nlist4,mnlist4,list4)
+
+      nnz = 0
+C$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(ibox,nchild,ilev,iss)
+C$OMP$PRIVATE(isrc,rtest,ilevup,jbox,i,ncoll,l,lbox,xdis,ydis,zdis)
+C$OMP$PRIVATE(llev,distest,itt,itarg,rr,jlev) REDUCTION(+:nnz)
+C$OMP$SCHEDULE(DYNAMIC)
+
+      do ibox = 1,nboxes
+        nchild = itree(ipointer(4)+ibox-1)
+        ilev = itree(ipointer(2)+ibox-1)
+        if(nchild.eq.0) then
+          do iss=isrcse(1,ibox),isrcse(2,ibox)
+             isrc = isrcper(iss)
+             rtest = rads(isrc)**2
+             ilevup = ceiling(log(rstmp(isrc)/boxsize(ilev))/log(2.0d0))
+             jbox = ibox
+             ilevup = min(ilevup,ilev)
+
+
+             do i=1,ilevup
+               jbox = itree(ipointer(3)+jbox-1)
+             enddo
+c
+c   loop over colleagues
+c
+             ncoll = itree(ipointer(6)+jbox-1)
+             do l=1,ncoll
+               lbox = itree(ipointer(7)+mnbors*(jbox-1)+l-1)
+c
+c  check if lbox does not intersect with region of interest
+c 
+               xdis = abs(centers(1,lbox)-xyzs(1,isrc))
+               ydis = abs(centers(2,lbox)-xyzs(2,isrc))
+               zdis = abs(centers(3,lbox)-xyzs(3,isrc))
+
+
+               llev = itree(ipointer(2)+lbox-1)
+               distest = rads(isrc)+boxsize(llev)/2
+               if((xdis.le.distest).and.(ydis.le.distest).and.
+     1             (zdis.le.distest)) then
+                 
+                 do itt=itargse(1,lbox),itargse(2,lbox)
+                   itarg = itargper(itt)
+
+                   if (ifre .eq. 1) then
+                   rr = (xyzs(1,isrc)-targs(1,itarg))**2 + 
+     1                (xyzs(2,isrc)-targs(2,itarg))**2 + 
+     2                (xyzs(3,isrc)-targs(3,itarg))**2
+                   else
+                   rr = abs((xyzs_c(1,isrc)-targets_c(1,itarg))**2 + 
+     1                (xyzs_c(2,isrc)-targets_c(2,itarg))**2 + 
+     2                (xyzs_c(3,isrc)-targets_c(3,itarg))**2)
+                   endif
+                   if(rr.le.rtest) then
+                     nnz = nnz + 1
+                   endif
+                 enddo
+
+
+               endif
+             enddo
+
+
+c
+c   loop over list1 boxes which are larger
+c
+             jlev = itree(ipointer(2)+jbox-1)
+             do l=1,nlist1(jbox)
+               lbox = list1(l,jbox)
+               llev = itree(ipointer(2)+lbox-1)
+               if(llev.lt.jlev) then
+                 do itt=itargse(1,lbox),itargse(2,lbox)
+                   itarg = itargper(itt)
+
+                   if (ifre .eq. 1) then
+                   rr = (xyzs(1,isrc)-targs(1,itarg))**2 + 
+     1                (xyzs(2,isrc)-targs(2,itarg))**2 + 
+     2                (xyzs(3,isrc)-targs(3,itarg))**2
+                   else
+                   rr = abs((xyzs_c(1,isrc)-targets_c(1,itarg))**2 + 
+     1                (xyzs_c(2,isrc)-targets_c(2,itarg))**2 + 
+     2                (xyzs_c(3,isrc)-targets_c(3,itarg))**2)
+                   endif
+
+                   if(rr.le.rtest) then
+                     nnz = nnz + 1
+                   endif
+
+                 enddo
+               endif
+             enddo
+          enddo
+        endif
+      enddo
+C$OMP END PARALLEL DO      
+
+       return
+       end
+c
+c
+c
+c
+c
+c-----------------------------------------------------
+      subroutine findnear_c(xyzs_c,ns,rads,ndt,targets_c,
+     1      nt,row_ptr,col_ind,ifre) 
+c     
+cc      identify all sources which are contained in 
+c       |xyzs(:,i)-targets(:,j)|<=rads(i).
+c       We use hung lists to identify a nearly minimal set of
+c       sources to loop over relevant for each target.
+c       
+c
+c       Calling sequence variables
+c
+c       xyzs    in: real *8 (3,ns)
+c               location of the sources
+c
+c       ns      in: integer
+c               number of sources
+c
+c       rads    in: real *8(ns)
+c               radii associated with the sources
+c
+c       ndt     in: integer
+c               leading dimension of target array
+c
+c       targets in: real *8(ndt,nt)
+c               target info
+c               the first three components must be
+c               the xyz coordinates
+c
+c       nt      in: integer
+c               number of targets
+c
+c       row_ptr    out: integer(nt+1)
+c                row_ptr(i) is the starting point in the col_ind
+c                array for the list of sources
+c                relevant for target i
+c
+c       col_ind     out: integer(nnz) (nnz is computed using
+c                                      findnearmem)
+c                col_ind(row_ptr(i):row_ptr(i+1)-1) is the list
+c                of sources which satisfy
+c                d(s_{j},t_{i}) <= rs_{j}
+c               
+c               
+c-------------------------------
+       implicit real *8 (a-h,o-z)
+       complex *16 xyzs_c(3,*),targets_c(ndt,*)
+       real *8 rads(*)
+       real *8, allocatable :: rstmp(:)
+
+       real *8, allocatable :: xyzs(:,:)
+
+       integer row_ptr(*),col_ind(*)
+       integer, allocatable :: nlst(:)
+c
+cc       tree variables
+c 
+       real *8, allocatable :: centers(:,:),boxsize(:),targs(:,:)
+       integer, allocatable :: itree(:)
+       integer *8 ipointer(8), ltree
+       integer, allocatable :: ilevel(:)
+       integer, allocatable :: nlist1(:),list1(:,:)
+       integer, allocatable :: nlist2(:),list2(:,:)
+       integer, allocatable :: nlist3(:),list3(:,:)
+       integer, allocatable :: nlist4(:),list4(:,:)
+       integer mnlist1,mnlist2,mnlist3,mnlist4
+       integer, allocatable :: isrcper(:),isrcse(:,:)
+       integer, allocatable :: itargper(:),itargse(:,:)
+       integer, allocatable :: nlistsrc(:)
+       integer, allocatable :: col_ind2(:),row_ind2(:),col_ptr(:)
+
+       allocate(rstmp(ns))
+
+C$OMP PARALLEL DO DEFAULT(SHARED)
+       do i=1,ns
+         rstmp(i) = 2*rads(i)
+       enddo
+C$OMP END PARALLEL DO       
+       allocate(targs(3,nt))
+
+C$OMP PARALLEL DO DEFAULT(SHARED)       
+       do i=1,nt
+         targs(1,i) = real(targets_c(1,i)) 
+         targs(2,i) = real(targets_c(2,i))
+         targs(3,i) = real(targets_c(3,i))
+       enddo
+C$OMP END PARALLEL DO       
+
+        allocate(xyzs(3,ns))
+
+C$OMP PARALLEL DO DEFAULT(SHARED)       
+       do i=1,ns
+         xyzs(1,i) = real(xyzs_c(1,i)) 
+         xyzs(2,i) = real(xyzs_c(2,i))
+         xyzs(3,i) = real(xyzs_c(3,i))
+       enddo
+C$OMP END PARALLEL DO       
+
+       idivflag = 0
+       ndiv = 2
+       isep = 1
+       nlmax = 51
+       nbmax = 0
+
+       nlevels = 0
+       nboxes = 0
+       mnlist1 = 0
+       mnlist2 = 0
+       mnlist3 = 0
+       mnlist4 = 0
+       mnbors = 27
+       ifunif = 0
+       nlmin = 0
+       iper = 0
+
+       call pts_tree_mem(xyzs,ns,targs,nt,idivflag,ndiv,nlmin,
+     1  nlmax,iper,ifunif,nlevels,nboxes,ltree) 
+
+       allocate(centers(3,nboxes),itree(ltree),boxsize(0:nlevels))
+
+       call pts_tree_build(xyzs,ns,targs,nt,idivflag,ndiv,nlmin,
+     1   nlmax,iper,ifunif,nlevels,nboxes,ltree,itree,ipointer,centers,
+     2   boxsize)
+       
+       allocate(isrcse(2,nboxes),itargse(2,nboxes))
+       allocate(isrcper(ns),itargper(nt))
+
+       call pts_tree_sort(ns,xyzs,itree,ltree,nboxes,nlevels,
+     1   ipointer,centers,isrcper,isrcse)
+      
+       call pts_tree_sort(nt,targs,itree,ltree,nboxes,nlevels,
+     1   ipointer,centers,itargper,itargse)
+
+c
+c   initialize various tree lists
+c
+      mnlist1 = 0
+      mnlist2 = 0
+      mnlist3 = 0
+      mnlist4 = 0
+      mnbors = 27
+
+      isep = 1
+      
+      call computemnlists(nlevels,nboxes,itree(ipointer(1)),boxsize,
+     1  centers,itree(ipointer(3)),itree(ipointer(4)),
+     2  itree(ipointer(5)),isep,itree(ipointer(6)),mnbors,
+     2  itree(ipointer(7)),iper,mnlist1,mnlist2,mnlist3,mnlist4)
+      
+      allocate(list1(mnlist1,nboxes),nlist1(nboxes))
+      allocate(list2(mnlist2,nboxes),nlist2(nboxes))
+      allocate(list3(mnlist3,nboxes),nlist3(nboxes))
+      allocate(list4(mnlist4,nboxes),nlist4(nboxes))
+
+      call computelists(nlevels,nboxes,itree(ipointer(1)),boxsize,
+     1  centers,itree(ipointer(3)),itree(ipointer(4)),
+     2  itree(ipointer(5)),isep,itree(ipointer(6)),mnbors,
+     3  itree(ipointer(7)),iper,nlist1,mnlist1,list1,nlist2,
+     4  mnlist2,list2,nlist3,mnlist3,list3,
+     4  nlist4,mnlist4,list4)
+
+c
+c   estimate list of tethered sources
+c
+c
+      allocate(nlistsrc(ns),nlst(nt))
+C$OMP PARALLEL DO DEFAULT(SHARED)      
+      do i=1,ns
+        nlistsrc(i) = 0
+      enddo
+C$OMP END PARALLEL DO      
+
+      nnz = 0
+      
+C$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(ibox,nchild,ilev,iss)
+C$OMP$PRIVATE(isrc,rtest,ilevup,jbox,i,ncoll,l,lbox,xdis,ydis,zdis)
+C$OMP$PRIVATE(llev,distest,itt,itarg,rr,jlev) REDUCTION(+:nnz)
+C$OMP$SCHEDULE(DYNAMIC)
+      do ibox = 1,nboxes
+        nchild = itree(ipointer(4)+ibox-1)
+        ilev = itree(ipointer(2)+ibox-1)
+        if(nchild.eq.0) then
+          do iss=isrcse(1,ibox),isrcse(2,ibox)
+             isrc = isrcper(iss)
+             rtest = rads(isrc)**2
+             ilevup = ceiling(log(rstmp(isrc)/boxsize(ilev))/log(2.0d0))
+             jbox = ibox
+             ilevup = min(ilevup,ilev)
+
+             do i=1,ilevup
+               jbox = itree(ipointer(3)+jbox-1)
+             enddo
+c
+c   loop over colleagues
+c
+             ncoll = itree(ipointer(6)+jbox-1)
+             do l=1,ncoll
+               lbox = itree(ipointer(7)+mnbors*(jbox-1)+l-1)
+c
+c  check if lbox does not intersect with region of interest
+c 
+               xdis = abs(centers(1,lbox)-xyzs(1,isrc))
+               ydis = abs(centers(2,lbox)-xyzs(2,isrc))
+               zdis = abs(centers(3,lbox)-xyzs(3,isrc))
+
+               llev = itree(ipointer(2)+lbox-1)
+               distest = rads(isrc)+boxsize(llev)/2
+               if((xdis.le.distest).and.(ydis.le.distest).and.
+     1             (zdis.le.distest)) then
+                 
+                 do itt=itargse(1,lbox),itargse(2,lbox)
+                   itarg = itargper(itt)
+
+
+                   if (ifre .eq. 1) then
+                   rr = (xyzs(1,isrc)-targs(1,itarg))**2 + 
+     1                (xyzs(2,isrc)-targs(2,itarg))**2 + 
+     2                (xyzs(3,isrc)-targs(3,itarg))**2
+                   else
+                   rr = abs((xyzs_c(1,isrc)-targets_c(1,itarg))**2 + 
+     1                      (xyzs_c(2,isrc)-targets_c(2,itarg))**2 + 
+     2                      (xyzs_c(3,isrc)-targets_c(3,itarg))**2)
+                   endif
+
+                   if(rr.le.rtest) then
+                     nlistsrc(isrc) = nlistsrc(isrc)+1
+                     nnz = nnz + 1
+                   endif
+                 enddo
+               endif
+             enddo
+
+c
+c   loop over list1 boxes which are larger
+c
+             jlev = itree(ipointer(2)+jbox-1)
+             do l=1,nlist1(jbox)
+               lbox = list1(l,jbox)
+               llev = itree(ipointer(2)+lbox-1)
+               if(llev.lt.jlev) then
+                 do itt=itargse(1,lbox),itargse(2,lbox)
+                   itarg = itargper(itt)
+
+                   if (ifre .eq. 1) then
+                   rr = (xyzs(1,isrc)-targs(1,itarg))**2 + 
+     1                (xyzs(2,isrc)-targs(2,itarg))**2 + 
+     2                (xyzs(3,isrc)-targs(3,itarg))**2
+                   else 
+                   rr = abs((xyzs_c(1,isrc)-targets_c(1,itarg))**2 + 
+     1                      (xyzs_c(2,isrc)-targets_c(2,itarg))**2 + 
+     2                      (xyzs_c(3,isrc)-targets_c(3,itarg))**2)
+                   endif
+
+                   if(rr.le.rtest) then
+                     nlistsrc(isrc) = nlistsrc(isrc)+1
+                     nnz = nnz + 1
+                   endif
+                 enddo
+               endif
+             enddo
+          enddo
+        endif
+      enddo
+C$OMP END PARALLEL DO      
+
+      allocate(col_ind2(nnz),row_ind2(nnz))
+      allocate(col_ptr(ns+1))
+
+      call cumsum(ns,nlistsrc,col_ptr(2))
+      col_ptr(1) = 1
+C$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(i)
+      do i=2,ns+1
+        col_ptr(i) = col_ptr(i) + 1
+      enddo
+C$OMP END PARALLEL DO     
+
+      
+C$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(ibox,nchild,ilev,iss)
+C$OMP$PRIVATE(isrc,rtest,ilevup,jbox,i,ncoll,l,lbox,xdis,ydis,zdis)
+C$OMP$PRIVATE(llev,distest,itt,itarg,rr,jlev,nsloc) 
+C$OMP$SCHEDULE(DYNAMIC)
+      do ibox = 1,nboxes
+        nchild = itree(ipointer(4)+ibox-1)
+        ilev = itree(ipointer(2)+ibox-1)
+        if(nchild.eq.0) then
+          do iss=isrcse(1,ibox),isrcse(2,ibox)
+             isrc = isrcper(iss)
+             nsloc = 0
+             rtest = rads(isrc)**2
+             ilevup = ceiling(log(rstmp(isrc)/boxsize(ilev))/log(2.0d0))
+             jbox = ibox
+             ilevup = min(ilevup,ilev)
+
+             do i=1,ilevup
+               jbox = itree(ipointer(3)+jbox-1)
+             enddo
+c
+c   loop over colleagues
+c
+             ncoll = itree(ipointer(6)+jbox-1)
+             do l=1,ncoll
+               lbox = itree(ipointer(7)+mnbors*(jbox-1)+l-1)
+c
+c  check if lbox does not intersect with region of interest
+c 
+               xdis = abs(centers(1,lbox)-xyzs(1,isrc))
+               ydis = abs(centers(2,lbox)-xyzs(2,isrc))
+               zdis = abs(centers(3,lbox)-xyzs(3,isrc))
+
+               llev = itree(ipointer(2)+lbox-1)
+               distest = rads(isrc)+boxsize(llev)/2
+               if((xdis.le.distest).and.(ydis.le.distest).and.
+     1             (zdis.le.distest)) then
+                 
+                 do itt=itargse(1,lbox),itargse(2,lbox)
+                   itarg = itargper(itt)
+
+                   if (ifre .eq. 1) then
+                   rr = (xyzs(1,isrc)-targs(1,itarg))**2 + 
+     1                (xyzs(2,isrc)-targs(2,itarg))**2 + 
+     2                (xyzs(3,isrc)-targs(3,itarg))**2
+                   else 
+                   rr = abs((xyzs_c(1,isrc)-targets_c(1,itarg))**2 + 
+     1                      (xyzs_c(2,isrc)-targets_c(2,itarg))**2 + 
+     2                      (xyzs_c(3,isrc)-targets_c(3,itarg))**2)
+                   endif
+
+                   if(rr.le.rtest) then
+                     col_ind2(col_ptr(isrc)+nsloc) = isrc
+                     row_ind2(col_ptr(isrc)+nsloc) = itarg
+                     nsloc = nsloc + 1
+                   endif
+                 enddo
+               endif
+             enddo
+
+c
+c   loop over list1 boxes which are larger
+c
+             jlev = itree(ipointer(2)+jbox-1)
+             do l=1,nlist1(jbox)
+               lbox = list1(l,jbox)
+               llev = itree(ipointer(2)+lbox-1)
+               if(llev.lt.jlev) then
+                 do itt=itargse(1,lbox),itargse(2,lbox)
+                   itarg = itargper(itt)
+
+                   if (ifre .eq. 1) then
+                   rr = (xyzs(1,isrc)-targs(1,itarg))**2 + 
+     1                (xyzs(2,isrc)-targs(2,itarg))**2 + 
+     2                (xyzs(3,isrc)-targs(3,itarg))**2
+                   else 
+                   rr = abs((xyzs_c(1,isrc)-targets_c(1,itarg))**2 + 
+     1                      (xyzs_c(2,isrc)-targets_c(2,itarg))**2 + 
+     2                      (xyzs_c(3,isrc)-targets_c(3,itarg))**2)
+                   endif
+
+                   if(rr.le.rtest) then
+                     col_ind2(col_ptr(isrc)+nsloc) = isrc
+                     row_ind2(col_ptr(isrc)+nsloc) = itarg
+                     nsloc = nsloc + 1
+                   endif
+                 enddo
+               endif
+             enddo
+          enddo
+        endif
+      enddo
+C$OMP END PARALLEL DO     
+      
+
+      if(ns.lt.1000.or.nnz.lt.10000) then
+        call conv_to_csc(nnz,nt,col_ind2,row_ind2,row_ptr,col_ind)
+      else
+        call conv_to_csc(nnz,nt,col_ind2,row_ind2,row_ptr,col_ind)
+      endif
+
+
+      return
+      end

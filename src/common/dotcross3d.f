@@ -151,6 +151,39 @@ c
 c
 c
 c
+        subroutine cross_prod3d_c(x,y,z)
+c------------------
+c  This subroutine computes the cross product of two vectors
+c   (all three vectors are complex)
+c  Input arguments:
+c
+c    - x: double precision complex(3)
+c        input vector 1
+c    - y: double precision complex(3)
+c        input vector 2
+c  
+c  Output arguments:
+c
+c    - z: double precision complex (3)
+c        x \times y
+c---------------------
+        implicit real *8 (a-h,o-z)
+        complex *16, intent(in) :: x(3),y(3)
+        complex *16, intent(out) :: z(3)
+c
+c       z = x \cross y
+c
+        z(1)=x(2)*y(3)-x(3)*y(2)
+        z(2)=x(3)*y(1)-x(1)*y(3)
+        z(3)=x(1)*y(2)-x(2)*y(1)
+c
+        return
+        end
+c
+c
+c
+c
+c
         subroutine zcross_prod3d(x,y,z)
 c------------------
 c  This subroutine computes the cross product of two complex vectors

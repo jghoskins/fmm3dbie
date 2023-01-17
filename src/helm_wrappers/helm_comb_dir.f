@@ -265,6 +265,7 @@ C$OMP END PARALLEL DO
 
       return
       end
+      
 c
 c
 c
@@ -3240,6 +3241,208 @@ C$OMP END PARALLEL DO
 
 
 
+
+      return
+      end
+c
+c
+c
+c
+c
+c
+ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+c
+c
+c           .   .   .   additional complex routines
+c
+c
+ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+c
+c
+      subroutine getnearquad_helm_comb_dir_c(npatches,norders,
+     1   ixyzs,iptype,npts,srccoefs_c,srcvals_c,ndtarg,ntarg,
+     1   targs_c,
+     2   ipatch_id,uvs_targ,eps,zpars,iquadtype,nnz,row_ptr,col_ind,
+     3   iquad,rfac0,nquad,wnear_c,ifre)
+c
+c       this subroutine generates the near field quadrature
+c       for the representation u = (\alpha S_{k}  + \beta D_{k}) ---(1)
+c       where the near field is specified by the user 
+c       in row sparse compressed format.
+c
+c       The quadrature is computed by the following strategy
+c        targets within a sphere of radius rfac0*rs
+c        of a chunk centroid is handled using adaptive integration
+c        where rs is the radius of the bounding sphere
+c        for the patch
+c  
+c       All other targets in the near field are handled via
+c        oversampled quadrature
+c
+c       The recommended parameter for rfac0 is 1.25d0
+c
+c       input:
+c         npatches - integer
+c            number of patches
+c
+c         norders - integer(npatches)
+c            order of discretization on each patch 
+c
+c         ixyzs - integer(npatches+1)
+c            starting location of data on patch i
+c  
+c         iptype - integer(npatches)
+c           type of patch
+c           iptype = 1 -> triangular patch discretized with RV nodes
+c
+c         npts - integer
+c            total number of discretization points on the boundary
+c
+c         srccoefs - real *8 (9,npts)
+c            koornwinder expansion coefficients of xyz, dxyz/du,
+c            and dxyz/dv on each patch. 
+c            For each point srccoefs(1:3,i) is xyz info
+c                           srccoefs(4:6,i) is dxyz/du info
+c                           srccoefs(7:9,i) is dxyz/dv info
+c
+c          srcvals - real *8 (12,npts)
+c             xyz(u,v) and derivative info sampled at the 
+c             discretization nodes on the surface
+c             srcvals(1:3,i) - xyz info
+c             srcvals(4:6,i) - dxyz/du info
+c             srcvals(7:9,i) - dxyz/dv info
+c             srcvals(10:12,i) - normals info
+c 
+c         ndtarg - integer
+c            leading dimension of target array
+c        
+c         ntarg - integer
+c            number of targets
+c
+c         targs - real *8 (ndtarg,ntarg)
+c            target information
+c
+c         ipatch_id - integer(ntarg)
+c            id of patch of target i, id = -1, if target is off-surface
+c
+c         uvs_targ - real *8 (2,ntarg)
+c            local uv coordinates on patch if on surface, otherwise
+c            set to 0 by default
+c            
+c          eps - real *8
+c             precision requested
+c
+c          zpars - complex *16 (3)
+c              kernel parameters (Referring to formula (1))
+c              zpars(1) = k 
+c              zpars(2) = alpha
+c              zpars(3) = beta
+c
+c           iquadtype - integer
+c              quadrature type
+c              iquadtype = 1, use ggq for self + adaptive integration
+c                 for rest
+c 
+c
+c           nnz - integer
+c             number of source patch-> target interactions in the near field
+c 
+c           row_ptr - integer(ntarg+1)
+c              row_ptr(i) is the pointer
+c              to col_ind array where list of relevant source patches
+c              for target i start
+c
+c           col_ind - integer (nnz)
+c               list of source patches relevant for all targets, sorted
+c               by the target number
+c
+c           iquad - integer(nnz+1)
+c               location in wnear array where quadrature for col_ind(i)
+c               starts
+c
+c           rfac0 - integer
+c               radius parameter for near field
+c
+c           nquad - integer
+c               number of entries in wnear
+c
+c        output
+c            wnear - complex *16(nquad)
+c               the desired near field quadrature
+c               
+c
+
+      implicit none 
+      integer, intent(in) :: npatches,norders(npatches),npts,nquad
+      integer, intent(in) :: ixyzs(npatches+1),iptype(npatches)
+      complex *16, intent(in) :: srccoefs_c(9,npts)
+      complex *16, intent(in) :: srcvals_c(12,npts)
+      real *8, intent(in) :: eps
+      real *8, intent(in) :: rfac0
+      integer, intent(in) :: ndtarg,ntarg
+      integer, intent(in) :: iquadtype
+      complex *16, intent(in) :: targs_c(ndtarg,ntarg)
+      integer, intent(in) :: ipatch_id(ntarg)
+      real *8, intent(in) :: uvs_targ(2,ntarg)
+      complex *16, intent(in) :: zpars(3)
+      integer, intent(in) :: nnz
+      integer, intent(in) :: row_ptr(ntarg+1),col_ind(nnz),iquad(nnz+1)
+      complex *16, intent(out) :: wnear_c(nquad)
+      integer ifre
+
+
+      integer ipars
+      integer ndd,ndz,ndi
+      real *8 dpars
+
+      complex *16 alpha,beta
+      integer i,j
+      integer ipv
+
+      procedure (), pointer :: fker
+      external h3d_slp_c, h3d_dlp_c, h3d_comb_c
+
+c
+c
+c        initialize the appropriate kernel function
+c
+
+      alpha = zpars(2)
+      beta = zpars(3)
+
+      ndz = 3
+      ndi = 0
+      ndd = 0
+      if(iquadtype.eq.1) then
+        fker => h3d_comb_c
+        ipv = 1
+        if(abs(alpha).ge.1.0d-16.and.abs(beta).lt.1.0d-16) then
+          fker=>h3d_slp_c
+          ipv = 0 
+        else if(abs(alpha).lt.1.0d-16.and.abs(beta).ge.1.0d-16) then
+          fker=>h3d_dlp_c
+        endif
+
+        call zgetnearquad_ggq_guru_c(npatches,norders,ixyzs,
+     1     iptype,npts,srccoefs_c,srcvals_c,ndtarg,ntarg,targs_c,
+     1     ipatch_id,uvs_targ,eps,ipv,fker,ndd,dpars,ndz,zpars,
+     1     ndi,ipars,nnz,row_ptr,col_ind,iquad,rfac0,nquad,wnear_c,
+     1     ifre)
+      endif
+
+      if(abs(alpha).ge.1.0d-16.and.abs(beta).lt.1.0d-16) then
+C$OMP PARALLEL DO DEFAULT(SHARED)        
+        do i=1,nquad
+          wnear_c(i) = wnear_c(i)*alpha
+        enddo
+C$OMP END PARALLEL DO        
+      else if(abs(alpha).lt.1.0d-16.and.abs(beta).ge.1.0d-16) then
+C$OMP PARALLEL DO DEFAULT(SHARED)        
+        do i=1,nquad
+          wnear_c(i) = wnear_c(i)*beta
+        enddo
+C$OMP END PARALLEL DO        
+      endif
 
       return
       end

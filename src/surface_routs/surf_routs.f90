@@ -295,6 +295,138 @@ end subroutine get_centroid_rads_tri
 !
 !
 !
+subroutine get_centroid_rads_c(npatches,norders,ixyzs,iptype,npts, &
+    srccoefs_c,cms_c,rads,ifre)
+!
+!   this subroutine computes the centroid of each patch and the radius 
+!   of the bounding sphere centered at the centroid
+!
+!   Input:
+!      npatches - integer
+!         number of patches
+!      norders - integer
+!         order of discretization of each patches
+!      ixyzs - integer(npatches+1)
+!            ixyzs(i) denotes the starting location in srccoefs,
+!             and srcvals array corresponding to patch i
+!   
+!      iptype - integer(npatches)
+!         type of patch
+!          iptype = 1, triangular patch discretized using RV nodes
+!      ifre   - a flag to determine if distances should be computed
+!         using real coordinates, or fully complex
+!
+!     npts - integer
+!         total number of discretization points
+!      srccoefs - real *8 (9,npts)
+!         koornwinder expansions of the geometry info
+!           x,y,z,,dx/du,dy/du,dz/du,dx/dv,dy/dv,dz/dv
+!
+!
+
+  implicit none
+  integer npatches,norders(npatches),npols,npts,ixyzs(npatches+1)
+  integer iptype(npatches),ifre
+  complex *16 srccoefs_c(9,npts)
+  complex *16 cms_c(3,npatches)
+  real *8 rads(npatches)
+
+  integer i,istart
+
+
+  do i=1,npatches
+    istart = ixyzs(i)
+    npols = ixyzs(i+1)-ixyzs(i)
+    if(iptype(i).eq.1) call get_centroid_rads_tri_c(norders(i), &
+        npols,srccoefs_c(1,istart),cms_c(1,i),rads(i),ifre)
+  enddo
+end subroutine get_centroid_rads_c
+!
+!
+!
+!
+
+subroutine get_centroid_rads_tri_c(norder,npols,srccoefs_c,&
+    cms_c,rads,ifre) 
+
+  integer norder,npols
+  complex *16 srccoefs_c(9,npols),cms_c(3)
+  real *8  rads
+  real *8 uv(2,3)
+  real *8 rad
+  complex *16 xyz_c(3,3)
+  real *8, allocatable :: pols(:,:)
+  integer ifre
+
+  integer i,j,l,m,lpt,np
+  
+
+  uv(1,1) = 0
+  uv(2,1) = 0
+
+  uv(1,2) = 0
+  uv(2,2) = 1
+
+  uv(1,3) = 1
+  uv(2,3) = 0
+
+  allocate(pols(npols,3))
+  do i=1,3
+    call koorn_pols(uv(1,i),norder,npols,pols(1,i))
+  enddo
+
+  do l=1,3
+    cms_c(l) = 0
+  enddo
+  rads = 0
+
+!
+!     loop over all three vertices
+!
+  do j=1,3
+    do m=1,3
+      xyz_c(m,j) = 0
+    enddo
+    
+    do l=1,npols
+      do m=1,3
+        xyz_c(m,j) = xyz_c(m,j) + srccoefs_c(m,l)*pols(l,j)
+      enddo
+    enddo
+  enddo
+
+  do m=1,3
+    do l=1,3
+      cms_c(m) = cms_c(m) + xyz_c(m,l)
+    enddo
+    cms_c(m) = cms_c(m)/3
+  enddo
+!
+!    compute radius of bounding sphere
+!
+  if (ifre .eq. 1) then
+  do m=1,3
+    rad = (real(cms_c(1)-xyz_c(1,m)))**2 + &
+          (real(cms_c(2)-xyz_c(2,m)))**2 + &
+          (real(cms_c(3)-xyz_c(3,m)))**2
+    if(rad.ge.rads) rads = rad
+  enddo
+
+  else
+  do m=1,3
+    rad = abs(cms_c(1)-xyz_c(1,m))**2 + &
+          abs(cms_c(2)-xyz_c(2,m))**2 + &
+          abs(cms_c(3)-xyz_c(3,m))**2
+    if(rad.ge.rads) rads = rad
+  enddo
+  endif
+  rads = sqrt(rads)
+end subroutine get_centroid_rads_tri_c
+!
+!
+!
+!
+!
 subroutine oversample_geom(npatches,norders,ixyzs,iptype, &
     npts,srccoefs,srcvals,nfars,ixyzso,nptso,srcover)
 !
@@ -822,6 +954,102 @@ subroutine get_near_far_split_pt(nd,n,xyz,r,xyz0,nf,nn,xyz_f,xyz_n, &
   enddo
 
 end subroutine get_near_far_split_pt
+
+
+
+
+
+
+subroutine get_near_far_split_pt_c(nd,n,xyz,r,xyz0,nf,nn,&
+    xyz_f,xyz_n,iind_f,iind_n,ifre)
+!
+!
+!   This subroutine splits a given set of targets into
+!   near points and far points with respect to a reference
+!   point.
+!
+!   A target is labelled near if |t-xyz0|<=r \,, 
+!   where xyz0 is the reference point, t is the target
+!   
+!
+!   input
+!     nd - integer
+!        dimension of target array (must at least be 3, with the
+!        first three components being the coordinates)
+!     n - integer 
+!       number of targets
+!     xyz - real *8 (nd,n)
+!       location of targets
+!     r - real *8 
+!       reference radius
+!     xyz0 - real *8(3)
+!        reference point
+!     
+!     output
+!      nf - integer
+!        number of far targets
+!      nn - integer
+!        number of near targets
+!      xyz_f - real *8 (nd,n)
+!        Collection of far targets. Note that
+!        only the first (nd,nf) block will
+!        be filled out
+!      xyz_n - real *8 (nd,n)
+!        Collection of near targets. Note that
+!        only the first (nd,nn) block will
+!        be filled out
+!      iind_f - integer (n)
+!         iind_f(i) denotes the location in xyz array
+!         of the ith target in xyz_f.
+!         Note that the first nf entries are filled out
+!      iind_n - integer (n)
+!         iind_n(i) denotes the location in xyz array
+!         of the ith target in xyz_n.
+!         Note that the first nn entries are filled out
+!      
+  implicit none
+  integer nd
+  integer n,nf,nn,iind_f(n),iind_n(n),ifre
+  complex *16 xyz(nd,n),xyz0(3)
+  real *8 rtmp,r2,r
+  complex *16 xyz_f(nd,n),xyz_n(nd,n)
+
+  integer i,j
+
+  r2 = r**2
+  nf = 0
+  nn = 0
+  do i=1,n
+    if (ifre .eq. 1) then
+    rtmp = (real(xyz(1,i)-xyz0(1)))**2 + &
+           (real(xyz(2,i)-xyz0(2)))**2 + &
+           (real(xyz(3,i)-xyz0(3)))**2
+    else
+    rtmp = (abs(xyz(1,i)-xyz0(1)))**2 + &
+           (abs(xyz(2,i)-xyz0(2)))**2 + &
+           (abs(xyz(3,i)-xyz0(3)))**2
+    endif
+    if(rtmp.le.r2) then
+      nn = nn +1
+
+      do j=1,nd
+        xyz_n(j,nn) = xyz(j,i)
+      enddo
+
+      iind_n(nn) = i
+    else
+      nf = nf +1
+      do j=1,nd
+        xyz_f(j,nf) = xyz(j,i)
+      enddo
+      iind_f(nf) = i
+    endif
+  enddo
+
+end subroutine get_near_far_split_pt_c
+
+
+
 
 
 

@@ -502,7 +502,30 @@ c-----------------------------------------
 
 
         do i=1,kpols
-          call cross_prod3d(srcvals(4,i),srcvals(7,i),srcvals(10,i))
+          call cross_prod3d_c(srcvals(4,i),srcvals(7,i),srcvals(10,i))
+          rr = sqrt(srcvals(10,i)**2 + srcvals(11,i)**2 + 
+     1        srcvals(12,i)**2)
+          qwts(i) = rr*da*whts(i)
+          srcvals(10,i) = srcvals(10,i)/rr
+          srcvals(11,i) = srcvals(11,i)/rr
+          srcvals(12,i) = srcvals(12,i)/rr
+        enddo
+
+        return
+        end
+
+c-----------------------------------------------------
+c
+c-----------------------------------------      
+        subroutine get_norms_qwts_tri_c(kpols,whts,srcvals,da,
+     1       qwts)
+        implicit real *8 (a-h,o-z)
+        complex *16 srcvals(12,kpols),qwts(kpols)
+        real *8 whts(kpols)
+        complex *16 tmp(3),da,rr
+
+        do i=1,kpols
+          call cross_prod3d_c(srcvals(4,i),srcvals(7,i),srcvals(10,i))
           rr = sqrt(srcvals(10,i)**2 + srcvals(11,i)**2 + 
      1        srcvals(12,i)**2)
           qwts(i) = rr*da*whts(i)
