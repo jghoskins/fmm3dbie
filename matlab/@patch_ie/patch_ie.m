@@ -113,6 +113,7 @@ classdef patch_ie
          [srcvals,srccoefs,norders,ixyzs,iptype,wts] = extract_arrays(obj);
          [objout,varargout] = oversample(obj,novers);
          [objout,varargout] = affine_transf(obj,mat,shift);
+         [varargout] = scatter(obj,varargin);
         
     end
 
