@@ -13,3 +13,5 @@ int2*
 *.so
 *.a
 *.vtk
+matlab/test/.DS_Store
+.DS_Store
