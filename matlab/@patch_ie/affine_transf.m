@@ -78,5 +78,10 @@ function [objout,varargout] = affine_transf(obj,mat,shift)
     objout.weights = weights;
     objout.srcvals = srcvals;
     objout.srccoefs = srccoefs;
+    sv = [objout.srcvals{:}];
+    objout.r  = sv(1:3,:);
+    objout.du = sv(4:6,:);
+    objout.dv = sv(7:9,:);
+    objout.n  = sv(10:12,:);
     
 end
